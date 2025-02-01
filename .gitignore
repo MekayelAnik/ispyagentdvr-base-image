@@ -1,0 +1,4 @@
+resources/build_data/
+build_logs/
+Dockerfile.*
+Dockerfile
