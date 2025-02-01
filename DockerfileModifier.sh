@@ -1,5 +1,5 @@
 #!/bin/bash
-REPO_NAME='base-image'
+REPO_NAME='ispyagentdvr-base-image'
 echo -e '# Use DEBIAN AS BASE-IMAGE' > ./"Dockerfile.$REPO_NAME"
 echo "$(cat "./resources/build_data/BASE_IMAGE")"
 if [ -e ./resources/build_data/BASE_IMAGE ]; then
