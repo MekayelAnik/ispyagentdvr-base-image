@@ -1,7 +1,5 @@
-#!/bin/bash
-REPO_NAME='ispyagentdvr-base-image'
+REPO_NAME='base-image'
 echo -e '# Use DEBIAN AS BASE-IMAGE' > ./"Dockerfile.$REPO_NAME"
-echo "$(cat "./resources/build_data/BASE_IMAGE")"
 if [ -e ./resources/build_data/BASE_IMAGE ]; then
   BASE_IMAGE=$(cat "./resources/build_data/BASE_IMAGE")
   BASE_IMAGE="FROM debian:${BASE_IMAGE}"
@@ -15,7 +13,7 @@ echo -e 'ARG TZ="Asia/Dhaka"
 ARG DEBIAN_FRONTEND="noninteractive"
 # http://stackoverflow.com/questions/48162574/ddg#49462622
 ARG APT_KEY_DONT_WARN_ON_DANGEROUS_USAGE="DontWarn"
-LABEL maintainer="MUHAMMAD MEKAYEL ANIK"' >> ./"Dockerfile.$REPO_NAME"
+LABEL maintainer="MOHAMMAD MEKAYEL ANIK"' >> ./"Dockerfile.$REPO_NAME"
 if [ -e ./resources/build_data/JELLYFIN_FFMPEG_VERSION ]; then
     echo -e 'LABEL idea_credit="Jellyfin & Linuxserver.io"' >> ./"Dockerfile.$REPO_NAME"
     echo -e "LABEL FFMPEG_VERSION='$(cat ./resources/build_data/JELLYFIN_FFMPEG_VERSION)'" >> ./"Dockerfile.$REPO_NAME"
@@ -24,7 +22,7 @@ echo -e '# https://github.com/NVIDIA/nvidia-docker/wiki/Installation-(Native-GPU
 ENV \
   NVIDIA_DRIVER_CAPABILITIES="compute,video,utility" \
   NVIDIA_VISIBLE_DEVICES="all"
-# Add all the ingredienes
+# Add all the ingredients
 ADD --chmod=555 ./resources /resources
 RUN bash /resources/setup.sh
 RUN \
