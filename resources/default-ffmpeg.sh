@@ -1,5 +1,5 @@
 #!/bin/bash
-apt-get install -y tzdata alsa-utils libgdiplus adduser --no-install-recommends --no-install-suggests
+apt-get install -y sudo tzdata alsa-utils libgdiplus adduser --no-install-recommends --no-install-suggests
 apt-get install -y curl unzip wget ca-certificates libldap-2.5-0 --no-install-recommends --no-install-suggests
 #####		Important for ARMHF		#####
 arch=$(uname -m)
