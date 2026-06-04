@@ -3,3 +3,4 @@ build_logs/
 Dockerfile.*
 Dockerfile
 docs/superpowers
+.vs/

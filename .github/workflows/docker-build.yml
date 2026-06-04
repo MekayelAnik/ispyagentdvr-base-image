@@ -1,14 +1,14 @@
 # =============================================================================
 # ispyagentdvr-base-image Docker Build & Publish
 # =============================================================================
-# Monitors iSpy FFmpeg (files.ispyconnect.com) and intel/compute-runtime for new releases.
-# Builds multi-arch Docker images when either upstream has a new version.
+# Monitors iSpy FFmpeg (files.ispyconnect.com) for new releases.
+# Builds multi-arch Docker images when upstream has a new version.
 #
 # Triggers:
 #   - repository_dispatch (cron-job.org external trigger)
 #   - workflow_dispatch (manual)
 #
-# Variant built: trixie-slim-vlc-ispy-ffmpeg-{VER}-intel-{VER}
+# Variant built: trixie-slim-vlc-ispy-ffmpeg-{VER}
 # Platforms: linux/amd64, linux/arm64, linux/arm/v7
 # Registries: GHCR + Docker Hub
 #
@@ -42,14 +42,6 @@ on:
         description: 'Override iSpy FFmpeg version (e.g. 8.1)'
         required: false
         type: string
-      compute_version:
-        description: 'Override intel compute-runtime version (e.g. 26.05.37020.3)'
-        required: false
-        type: string
-      igc_version:
-        description: 'Override IGC version (e.g. 2.28.4)'
-        required: false
-        type: string
       force_build:
         description: 'Force build even if tag exists'
         required: false
@@ -61,7 +53,7 @@ on:
         type: boolean
         default: true
       retag_source:
-        description: 'Existing tag to promote as latest, e.g. trixie-slim-vlc-ispy-ffmpeg-8.1-intel-25.13.33276.16 (for retag-latest action)'
+        description: 'Existing tag to promote as latest, e.g. trixie-slim-vlc-ispy-ffmpeg-8.1 (for retag-latest action)'
         required: false
         type: string
       push_to_dockerhub:
@@ -158,8 +150,6 @@ jobs:
     outputs:
       should_build: ${{ steps.final-build-decision.outputs.should_build || steps.determine.outputs.should_build }}
       ffmpeg_version: ${{ steps.determine.outputs.ffmpeg_version }}
-      compute_version: ${{ steps.determine.outputs.compute_version }}
-      igc_version: ${{ steps.determine.outputs.igc_version }}
       image_tag: ${{ steps.determine.outputs.image_tag }}
       date_tag: ${{ steps.determine.outputs.date_tag }}
       action_type: ${{ steps.set-action.outputs.action }}
@@ -244,41 +234,6 @@ jobs:
           echo "iSpy FFmpeg: $VERSION (tarballs available: $AVAILABLE)"
           echo "::endgroup::"
 
-      - name: Fetch intel compute-runtime release
-        id: fetch-intel
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          echo "::group::Fetching intel/compute-runtime latest release"
-
-          RELEASE_JSON=$(gh api repos/intel/compute-runtime/releases/latest 2>/dev/null || echo '{}')
-
-          if [[ "$RELEASE_JSON" == "{}" ]] || [[ "$(echo "$RELEASE_JSON" | jq -r '.tag_name // ""')" == "" ]]; then
-            echo "::warning::Failed to fetch compute-runtime release"
-            echo "tag=" >> "$GITHUB_OUTPUT"
-            echo "version=" >> "$GITHUB_OUTPUT"
-            echo "igc_version=" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          TAG=$(echo "$RELEASE_JSON" | jq -r '.tag_name')
-          VERSION=$(echo "$TAG" | sed 's/^v//')
-
-          BODY=$(echo "$RELEASE_JSON" | jq -r '.body // ""')
-          IGC_TAG=$(echo "$BODY" | grep -oP 'intel-graphics-compiler@\Kv[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
-          IGC_VERSION=$(echo "$IGC_TAG" | sed 's/^v//')
-
-          if [[ -z "$IGC_VERSION" ]]; then
-            echo "::warning::Could not extract IGC version from compute-runtime release body — will use stored state if available"
-          fi
-
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "igc_version=$IGC_VERSION" >> "$GITHUB_OUTPUT"
-          echo "Intel compute-runtime: $VERSION, IGC: $IGC_VERSION"
-          echo "::endgroup::"
-
       - name: Read pipeline state
         id: read-state
         env:
@@ -291,13 +246,9 @@ jobs:
             --jq '.content' 2>/dev/null | base64 -d 2>/dev/null || echo '{}')
 
           STORED_FFMPEG=$(echo "$STATE_JSON" | jq -r '.ffmpeg_version // ""')
-          STORED_COMPUTE=$(echo "$STATE_JSON" | jq -r '.compute_version // ""')
-          STORED_IGC=$(echo "$STATE_JSON" | jq -r '.igc_version // ""')
 
           echo "stored_ffmpeg=$STORED_FFMPEG" >> "$GITHUB_OUTPUT"
-          echo "stored_compute=$STORED_COMPUTE" >> "$GITHUB_OUTPUT"
-          echo "stored_igc=$STORED_IGC" >> "$GITHUB_OUTPUT"
-          echo "State: ffmpeg=$STORED_FFMPEG compute=$STORED_COMPUTE igc=$STORED_IGC"
+          echo "State: ffmpeg=$STORED_FFMPEG"
           echo "::endgroup::"
 
       - name: Determine build versions
@@ -306,15 +257,9 @@ jobs:
           ACTION: ${{ steps.set-action.outputs.action }}
           FORCE_BUILD: ${{ github.event.inputs.force_build || 'false' }}
           UPSTREAM_FFMPEG: ${{ steps.fetch-ffmpeg.outputs.version }}
-          UPSTREAM_COMPUTE: ${{ steps.fetch-intel.outputs.version }}
-          UPSTREAM_IGC: ${{ steps.fetch-intel.outputs.igc_version }}
           FFMPEG_AVAILABLE: ${{ steps.fetch-ffmpeg.outputs.available }}
           STORED_FFMPEG: ${{ steps.read-state.outputs.stored_ffmpeg }}
-          STORED_COMPUTE: ${{ steps.read-state.outputs.stored_compute }}
-          STORED_IGC: ${{ steps.read-state.outputs.stored_igc }}
           MANUAL_FFMPEG: ${{ github.event.inputs.ffmpeg_version }}
-          MANUAL_COMPUTE: ${{ github.event.inputs.compute_version }}
-          MANUAL_IGC: ${{ github.event.inputs.igc_version }}
           TAG_AS_LATEST: ${{ github.event.inputs.tag_as_latest || 'true' }}
         run: |
           set -euo pipefail
@@ -325,17 +270,12 @@ jobs:
           LATEST_NEEDS_PROMOTE="false"
 
           FFMPEG_VERSION="${MANUAL_FFMPEG:-$UPSTREAM_FFMPEG}"
-          COMPUTE_VERSION="${MANUAL_COMPUTE:-$UPSTREAM_COMPUTE}"
-          IGC_VERSION="${MANUAL_IGC:-$UPSTREAM_IGC}"
 
           FFMPEG_VERSION="${FFMPEG_VERSION#v}"
-          COMPUTE_VERSION="${COMPUTE_VERSION#v}"
-          IGC_VERSION="${IGC_VERSION#v}"
 
           case "$ACTION" in
             auto-check)
               FFMPEG_CHANGED="false"
-              COMPUTE_CHANGED="false"
 
               if [[ -n "$FFMPEG_VERSION" && "$FFMPEG_VERSION" != "$STORED_FFMPEG" && "$FFMPEG_AVAILABLE" == "true" ]]; then
                 echo "iSpy FFmpeg changed: $STORED_FFMPEG → $FFMPEG_VERSION (tarballs available)"
@@ -344,29 +284,18 @@ jobs:
                 echo "::warning::iSpy FFmpeg $FFMPEG_VERSION tarballs unavailable — skipping"
               fi
 
-              if [[ -n "$COMPUTE_VERSION" && "$COMPUTE_VERSION" != "$STORED_COMPUTE" ]]; then
-                echo "Intel compute-runtime changed: $STORED_COMPUTE → $COMPUTE_VERSION"
-                COMPUTE_CHANGED="true"
-              fi
-
-              if [[ "$FFMPEG_CHANGED" == "true" || "$COMPUTE_CHANGED" == "true" ]]; then
+              if [[ "$FFMPEG_CHANGED" == "true" ]]; then
                 SHOULD_BUILD="true"
               fi
 
               if [[ "$FFMPEG_CHANGED" != "true" && -n "$STORED_FFMPEG" ]]; then
                 FFMPEG_VERSION="$STORED_FFMPEG"
               fi
-              if [[ "$COMPUTE_CHANGED" != "true" && -n "$STORED_COMPUTE" ]]; then
-                COMPUTE_VERSION="$STORED_COMPUTE"
-              fi
-              if [[ -n "$STORED_IGC" && -z "$MANUAL_IGC" && "$COMPUTE_CHANGED" != "true" ]]; then
-                IGC_VERSION="$STORED_IGC"
-              fi
 
               if [[ "$TAG_AS_LATEST" == "true" && "$SHOULD_BUILD" == "true" ]]; then
                 LATEST_NEEDS_PROMOTE="true"
               elif [[ "$TAG_AS_LATEST" == "true" ]]; then
-                IMAGE_TAG="${DEBIAN_BASE}-vlc-ispy-ffmpeg-${FFMPEG_VERSION}-intel-${COMPUTE_VERSION}"
+                IMAGE_TAG="${DEBIAN_BASE}-vlc-ispy-ffmpeg-${FFMPEG_VERSION}"
                 GHCR_PREFIX="${{ env.GHCR_REPO }}"
                 VERSION_DIGEST=$(crane digest "${GHCR_PREFIX}:${IMAGE_TAG}" 2>/dev/null || echo "none")
                 LATEST_DIGEST=$(crane digest "${GHCR_PREFIX}:latest" 2>/dev/null || echo "missing")
@@ -387,12 +316,6 @@ jobs:
               if [[ -z "$FFMPEG_VERSION" && -n "$STORED_FFMPEG" ]]; then
                 FFMPEG_VERSION="$STORED_FFMPEG"
               fi
-              if [[ -z "$COMPUTE_VERSION" && -n "$STORED_COMPUTE" ]]; then
-                COMPUTE_VERSION="$STORED_COMPUTE"
-              fi
-              if [[ -z "$IGC_VERSION" && -n "$STORED_IGC" ]]; then
-                IGC_VERSION="$STORED_IGC"
-              fi
               ;;
 
             retag-latest)
@@ -410,9 +333,6 @@ jobs:
               if [[ -z "$FFMPEG_VERSION" && -n "$STORED_FFMPEG" ]]; then
                 FFMPEG_VERSION="$STORED_FFMPEG"
               fi
-              if [[ -z "$COMPUTE_VERSION" && -n "$STORED_COMPUTE" ]]; then
-                COMPUTE_VERSION="$STORED_COMPUTE"
-              fi
               ;;
           esac
 
@@ -424,26 +344,22 @@ jobs:
           if [[ "$ACTION" == "retag-latest" ]]; then
             IMAGE_TAG="${RETAG_SOURCE}"
           else
-            IMAGE_TAG="${DEBIAN_BASE}-vlc-ispy-ffmpeg-${FFMPEG_VERSION}-intel-${COMPUTE_VERSION}"
+            IMAGE_TAG="${DEBIAN_BASE}-vlc-ispy-ffmpeg-${FFMPEG_VERSION}"
           fi
 
-          if [[ "$ACTION" != "retag-latest" && ( -z "$FFMPEG_VERSION" || -z "$COMPUTE_VERSION" || -z "$IGC_VERSION" ) ]]; then
-            echo "::error::Missing required version(s): ffmpeg=$FFMPEG_VERSION compute=$COMPUTE_VERSION igc=$IGC_VERSION"
+          if [[ "$ACTION" != "retag-latest" && -z "$FFMPEG_VERSION" ]]; then
+            echo "::error::Missing required version: ffmpeg=$FFMPEG_VERSION"
             SHOULD_BUILD="false"
           fi
 
           echo "should_build=$SHOULD_BUILD" >> "$GITHUB_OUTPUT"
           echo "ffmpeg_version=$FFMPEG_VERSION" >> "$GITHUB_OUTPUT"
-          echo "compute_version=$COMPUTE_VERSION" >> "$GITHUB_OUTPUT"
-          echo "igc_version=$IGC_VERSION" >> "$GITHUB_OUTPUT"
           echo "image_tag=$IMAGE_TAG" >> "$GITHUB_OUTPUT"
           echo "date_tag=$DATE_TAG" >> "$GITHUB_OUTPUT"
           echo "latest_needs_promote=$LATEST_NEEDS_PROMOTE" >> "$GITHUB_OUTPUT"
 
           echo "Build decision: should_build=$SHOULD_BUILD"
           echo "  ffmpeg=$FFMPEG_VERSION"
-          echo "  compute=$COMPUTE_VERSION"
-          echo "  igc=$IGC_VERSION"
           echo "  tag=$IMAGE_TAG"
           echo "  date=$DATE_TAG"
           echo "::endgroup::"
@@ -594,8 +510,6 @@ jobs:
         if: steps.check-tag.outputs.skip_build != 'true'
         env:
           FFMPEG_VERSION: ${{ needs.check-releases.outputs.ffmpeg_version }}
-          COMPUTE_VERSION: ${{ needs.check-releases.outputs.compute_version }}
-          IGC_VERSION: ${{ needs.check-releases.outputs.igc_version }}
           IMAGE_TAG: ${{ needs.check-releases.outputs.image_tag }}
           DATE_TAG: ${{ needs.check-releases.outputs.date_tag }}
         run: |
@@ -604,8 +518,6 @@ jobs:
           mkdir -p resources/build_data
           echo "${DEFAULT_BASE_IMAGE}" > resources/build_data/BASE_IMAGE
           echo "${FFMPEG_VERSION}" > resources/build_data/FFMPEG_VERSION
-          echo "${COMPUTE_VERSION}" > resources/build_data/COMPUTE_VERSION
-          echo "${IGC_VERSION}" > resources/build_data/IGC_VERSION
           touch resources/build_data/vlc
           touch resources/build_data/hwaccel
           echo "Build started: $(TZ="${TZ}" date +'%Y-%m-%dT%H:%M:%S%z')" > resources/build_data/base-image-timestamp
@@ -1048,24 +960,18 @@ jobs:
       - name: Write state
         env:
           FFMPEG_VERSION: ${{ needs.check-releases.outputs.ffmpeg_version }}
-          COMPUTE_VERSION: ${{ needs.check-releases.outputs.compute_version }}
-          IGC_VERSION: ${{ needs.check-releases.outputs.igc_version }}
           IMAGE_TAG: ${{ needs.check-releases.outputs.image_tag }}
         run: |
           set -euo pipefail
           cat > state.json <<EOF
           {
             "ffmpeg_version": "${FFMPEG_VERSION}",
-            "compute_version": "${COMPUTE_VERSION}",
-            "igc_version": "${IGC_VERSION}",
             "image_tag": "${IMAGE_TAG}",
             "updated_at": "$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
           }
           EOF
 
           echo "${FFMPEG_VERSION}" > ffmpeg-version
-          echo "${COMPUTE_VERSION}" > compute-runtime-version
-          echo "${IGC_VERSION}" > igc-version
           date -u +'%Y-%m-%dT%H:%M:%SZ' > last-built-time
 
       - name: Commit and push state
@@ -1110,8 +1016,6 @@ jobs:
         env:
           IMAGE_TAG: ${{ needs.check-releases.outputs.image_tag }}
           FFMPEG_VERSION: ${{ needs.check-releases.outputs.ffmpeg_version }}
-          COMPUTE_VERSION: ${{ needs.check-releases.outputs.compute_version }}
-          IGC_VERSION: ${{ needs.check-releases.outputs.igc_version }}
         run: |
           set -euo pipefail
           mkdir -p resources/build_data
@@ -1119,8 +1023,6 @@ jobs:
           echo "${IMAGE_TAG}" > resources/tag
           date -u +'%Y-%m-%dT%H:%M:%SZ' > resources/build-timestamp
           echo "${FFMPEG_VERSION}" > resources/build_data/FFMPEG_VERSION
-          echo "${COMPUTE_VERSION}" > resources/build_data/COMPUTE_VERSION
-          echo "${IGC_VERSION}" > resources/build_data/IGC_VERSION
 
       - name: Commit and push
         run: |
@@ -1159,8 +1061,6 @@ jobs:
         env:
           IMAGE_TAG: ${{ needs.check-releases.outputs.image_tag }}
           FFMPEG_VERSION: ${{ needs.check-releases.outputs.ffmpeg_version }}
-          COMPUTE_VERSION: ${{ needs.check-releases.outputs.compute_version }}
-          IGC_VERSION: ${{ needs.check-releases.outputs.igc_version }}
         run: |
           set -euo pipefail
           if [[ ! -f README.md ]]; then
@@ -1168,8 +1068,8 @@ jobs:
             exit 0
           fi
 
-          sed -i "s|ispy-ffmpeg-[0-9.]*-intel-[0-9.]*|ispy-ffmpeg-${FFMPEG_VERSION}-intel-${COMPUTE_VERSION}|g" README.md
-          sed -i "s|IGC_VERSION=.*|IGC_VERSION=${IGC_VERSION}|g" README.md 2>/dev/null || true
+          sed -i "s|ispy-ffmpeg-[0-9.]*-intel-[0-9.]*|ispy-ffmpeg-${FFMPEG_VERSION}|g" README.md
+          sed -i "s|ispy-ffmpeg-[0-9][0-9.]*|ispy-ffmpeg-${FFMPEG_VERSION}|g" README.md
 
       - name: Commit and push
         run: |
