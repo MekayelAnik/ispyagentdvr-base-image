@@ -29,12 +29,36 @@ amd64_driver(){
     DEBIAN_FRONTEND=noninteractive apt-get install -t sid -y --no-install-recommends --no-install-suggests \
     intel-media-va-driver-non-free || \
     DEBIAN_FRONTEND=noninteractive apt-get install -t sid -y --no-install-recommends --no-install-suggests \
-    intel-media-va-driver || echo "WARNING: Intel media driver unavailable - Intel QuickSync disabled"
+    intel-media-va-driver || { echo "ERROR: Intel media driver (iHD) install failed - aborting build"; exit 1; }
     DEBIAN_FRONTEND=noninteractive apt-get install -t sid -y --no-install-recommends --no-install-suggests \
-    i965-va-driver || echo "WARNING: i965 driver unavailable - pre-Broadwell Intel VAAPI disabled"
+    i965-va-driver || { echo "ERROR: i965 driver install failed - aborting build"; exit 1; }
 
     DEBIAN_FRONTEND=noninteractive apt-get install -t sid -y --no-install-recommends --no-install-suggests \
-    nvidia-vaapi-driver libnvidia-encode1 || echo "WARNING: NVIDIA VAAPI packages skipped due to dependency conflict"
+    nvidia-vaapi-driver libnvidia-encode1 || { echo "ERROR: NVIDIA VAAPI driver install failed - aborting build"; exit 1; }
+
+    verify_amd64_drivers
+}
+
+# Fail the build if any expected VAAPI driver .so is missing. apt can exit 0
+# on partial states and a missing driver must never ship in the image.
+verify_amd64_drivers() {
+    echo "Verifying VAAPI driver installation:"
+    local dri_dir="/usr/lib/x86_64-linux-gnu/dri"
+    local required="radeonsi_drv_video.so iHD_drv_video.so i965_drv_video.so nvidia_drv_video.so"
+    local missing=0
+    for drv in $required; do
+        if [ -e "$dri_dir/$drv" ]; then
+            echo "OK: $drv"
+        else
+            echo "ERROR: required VAAPI driver missing: $dri_dir/$drv"
+            missing=1
+        fi
+    done
+    if [ "$missing" -ne 0 ]; then
+        echo "ERROR: VAAPI driver verification failed - refusing to ship broken image"
+        exit 1
+    fi
+    echo "All required VAAPI drivers present."
 }
 
 arm64_driver() {
