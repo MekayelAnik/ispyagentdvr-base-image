@@ -7,25 +7,30 @@ bash /resources/add_debian_sid.sh
 
 amd64_driver(){
 #    bash /resources/add_debian_backports.sh
-    ### Note SID is used because some driver packages require a more recent libc6 than available in backports
+    ### Note SID is used because the VAAPI driver stack (iHD/libva 2.23,
+    ### libigdgmm12 >=22.10) and a more recent libc6 are not available in
+    ### trixie/backports. All VAAPI UMDs must share one libva ABI, so the
+    ### whole amd64 driver set is pulled from sid (libva-driver-abi-1.23).
     echo "Installing drivers from Debian sources:"
 
     DEBIAN_FRONTEND=noninteractive apt-get install -t sid -y --no-install-recommends --no-install-suggests \
     libc6 openssl
 
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends --no-install-suggests \
+    DEBIAN_FRONTEND=noninteractive apt-get install -t sid -y --no-install-recommends --no-install-suggests \
     mesa-va-drivers mesa-vulkan-drivers mesa-vdpau-drivers vulkan-tools vdpau-driver-all vainfo
 
     # Intel VAAPI drivers: iHD (Gen8+/Broadwell+) with fallback to the free
     # variant, plus i965 for pre-Broadwell. This is what FFmpeg's VAAPI path
     # actually loads for Intel QuickSync - the OpenCL compute-runtime
     # previously installed here was never used by FFmpeg (no --enable-opencl).
+    # Pulled from sid so libva2 2.23 / libigdgmm12 22.10 resolve consistently
+    # with the rest of the VAAPI stack.
     echo "Installing Intel VAAPI drivers:"
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends --no-install-suggests \
+    DEBIAN_FRONTEND=noninteractive apt-get install -t sid -y --no-install-recommends --no-install-suggests \
     intel-media-va-driver-non-free || \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends --no-install-suggests \
+    DEBIAN_FRONTEND=noninteractive apt-get install -t sid -y --no-install-recommends --no-install-suggests \
     intel-media-va-driver || echo "WARNING: Intel media driver unavailable - Intel QuickSync disabled"
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends --no-install-suggests \
+    DEBIAN_FRONTEND=noninteractive apt-get install -t sid -y --no-install-recommends --no-install-suggests \
     i965-va-driver || echo "WARNING: i965 driver unavailable - pre-Broadwell Intel VAAPI disabled"
 
     DEBIAN_FRONTEND=noninteractive apt-get install -t sid -y --no-install-recommends --no-install-suggests \
