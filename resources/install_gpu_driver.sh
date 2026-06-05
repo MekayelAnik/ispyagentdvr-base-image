@@ -7,33 +7,49 @@ bash /resources/add_debian_sid.sh
 
 amd64_driver(){
 #    bash /resources/add_debian_backports.sh
-    ### Note SID is used because the VAAPI driver stack (iHD/libva 2.23,
-    ### libigdgmm12 >=22.10) and a more recent libc6 are not available in
-    ### trixie/backports. All VAAPI UMDs must share one libva ABI, so the
-    ### whole amd64 driver set is pulled from sid (libva-driver-abi-1.23).
+    ### SID is only used for a more recent libc6/openssl than trixie ships.
+    ### Every VAAPI driver comes from trixie - one coherent release, all built
+    ### against the same libva (abi-1.22). Pulling them from sid hits in-flight
+    ### mesa-libgallium / libva transitions that make the set unsatisfiable
+    ### (iHD wants abi-1.23, i965 still abi-1.22, mesa-va-drivers mid-rebuild).
     echo "Installing drivers from Debian sources:"
 
     DEBIAN_FRONTEND=noninteractive apt-get install -t sid -y --no-install-recommends --no-install-suggests \
     libc6 openssl
 
-    DEBIAN_FRONTEND=noninteractive apt-get install -t sid -y --no-install-recommends --no-install-suggests \
+    # The Intel media driver lives in Debian's non-free component, which the
+    # base image only enables for sid. Enable non-free on the release's OWN
+    # sources so iHD installs from trixie instead of being dragged in from sid
+    # with an unsatisfiable dependency chain. Edit the existing sources in
+    # place to avoid Signed-By conflicts with a duplicate source definition.
+    if [ -f /etc/apt/sources.list.d/debian.sources ]; then
+        sed -i 's/^Components: .*/Components: main contrib non-free non-free-firmware/' /etc/apt/sources.list.d/debian.sources
+    elif [ -f /etc/apt/sources.list ]; then
+        sed -i -E 's/^(deb[^#]*main)[[:space:]]*$/\1 contrib non-free non-free-firmware/' /etc/apt/sources.list
+    fi
+    apt-get update
+
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends --no-install-suggests \
     mesa-va-drivers mesa-vulkan-drivers mesa-vdpau-drivers vulkan-tools vdpau-driver-all vainfo
 
     # Intel VAAPI drivers: iHD (Gen8+/Broadwell+) with fallback to the free
     # variant, plus i965 for pre-Broadwell. This is what FFmpeg's VAAPI path
     # actually loads for Intel QuickSync - the OpenCL compute-runtime
     # previously installed here was never used by FFmpeg (no --enable-opencl).
-    # Pulled from sid so libva2 2.23 / libigdgmm12 22.10 resolve consistently
-    # with the rest of the VAAPI stack.
+    # Install failures are FATAL: a missing driver must never ship silently.
     echo "Installing Intel VAAPI drivers:"
-    DEBIAN_FRONTEND=noninteractive apt-get install -t sid -y --no-install-recommends --no-install-suggests \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends --no-install-suggests \
     intel-media-va-driver-non-free || \
-    DEBIAN_FRONTEND=noninteractive apt-get install -t sid -y --no-install-recommends --no-install-suggests \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends --no-install-suggests \
     intel-media-va-driver || { echo "ERROR: Intel media driver (iHD) install failed - aborting build"; exit 1; }
-    DEBIAN_FRONTEND=noninteractive apt-get install -t sid -y --no-install-recommends --no-install-suggests \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends --no-install-suggests \
     i965-va-driver || { echo "ERROR: i965 driver install failed - aborting build"; exit 1; }
 
-    DEBIAN_FRONTEND=noninteractive apt-get install -t sid -y --no-install-recommends --no-install-suggests \
+    # NVIDIA VAAPI from trixie as well: nvidia-vaapi-driver 0.0.13 +
+    # libnvidia-encode1 are coherent with the trixie libva/gstreamer set. The
+    # sid build needs gstreamer-bad >= 1.28.1 (trixie ships 1.24.9) and would
+    # drag a conflicting sid chain, so keep it on trixie and make it fatal.
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends --no-install-suggests \
     nvidia-vaapi-driver libnvidia-encode1 || { echo "ERROR: NVIDIA VAAPI driver install failed - aborting build"; exit 1; }
 
     verify_amd64_drivers
