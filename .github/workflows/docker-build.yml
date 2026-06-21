@@ -187,7 +187,7 @@ jobs:
           sudo apt-get install -y -qq jq skopeo > /dev/null 2>&1
 
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Setup build environment
         uses: ./.github/actions/setup-build-env
@@ -469,7 +469,7 @@ jobs:
           df -h /
 
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Setup build environment
         uses: ./.github/actions/setup-build-env
@@ -632,7 +632,7 @@ jobs:
 
       - name: Checkout
         if: steps.check-digests.outputs.has_digests == 'true'
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Setup build environment
         if: steps.check-digests.outputs.has_digests == 'true'
@@ -764,7 +764,7 @@ jobs:
       - name: Upload Trivy scan results
         if: steps.check-digests.outputs.has_digests == 'true' && (github.event.inputs.run_security_scan || 'true') == 'true'
         continue-on-error: true
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: 'trivy-results.sarif'
           category: 'trivy-base-image'
@@ -792,7 +792,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Setup build environment
         uses: ./.github/actions/setup-build-env
@@ -847,7 +847,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Setup build environment
         uses: ./.github/actions/setup-build-env
@@ -939,7 +939,7 @@ jobs:
 
     steps:
       - name: Checkout pipeline-state branch
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: pipeline-state
           fetch-depth: 1
@@ -1007,7 +1007,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: main
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -1052,7 +1052,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: main
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -1097,7 +1097,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: main
 
