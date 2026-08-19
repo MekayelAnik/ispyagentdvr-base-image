@@ -559,7 +559,7 @@ jobs:
           VERSION: ${{ needs.check-releases.outputs.image_tag }}
         run: |
           set -euo pipefail
-          if [[ "$FORCE_BUILD" == "true" || "$STALE_REBUILD" == "true" ]]; then
+          if [[ "${FORCE_BUILD:-}" == "true" || "${STALE_REBUILD:-}" == "true" ]]; then
             echo "Force build or package refresh — skipping existence check"
             echo "skip_build=false" >> "$GITHUB_OUTPUT"
             exit 0
