@@ -104,6 +104,9 @@ env:
   DEFAULT_PLATFORMS: ${{ vars.DEFAULT_PLATFORMS || 'linux/amd64,linux/arm64,linux/arm/v7' }}
   DEBIAN_BASE: ${{ vars.DEBIAN_BASE || 'trixie-slim' }}
   DEFAULT_BASE_IMAGE: ${{ vars.DEFAULT_BASE_IMAGE || format('debian:{0}', vars.DEBIAN_BASE || 'trixie-slim') }}
+  # Rebuild even with no upstream FFmpeg change once the published image is this old,
+  # so Debian security updates actually reach the image. Set to 0 to disable.
+  MAX_IMAGE_AGE_DAYS: ${{ vars.MAX_IMAGE_AGE_DAYS || '30' }}
 
 jobs:
   # ===========================================================================
@@ -159,6 +162,7 @@ jobs:
       compression_level: ${{ steps.set-compression.outputs.level }}
       build_matrix: ${{ steps.generate-matrix.outputs.matrix }}
       latest_needs_promote: ${{ steps.determine.outputs.latest_needs_promote }}
+      stale_rebuild: ${{ steps.determine.outputs.stale_rebuild }}
 
     steps:
       - name: Set action type
@@ -277,6 +281,7 @@ jobs:
           DATE_TAG=$(TZ="${TZ}" date +%d%m%Y)
           SHOULD_BUILD="false"
           LATEST_NEEDS_PROMOTE="false"
+          STALE_REBUILD="false"
 
           FFMPEG_VERSION="${MANUAL_FFMPEG:-$UPSTREAM_FFMPEG}"
 
@@ -299,6 +304,30 @@ jobs:
 
               if [[ "$FFMPEG_CHANGED" != "true" && -n "$STORED_FFMPEG" ]]; then
                 FFMPEG_VERSION="$STORED_FFMPEG"
+              fi
+
+              # Debian package refresh. Upstream FFmpeg moves rarely, so without this the
+              # image can sit for months while trixie ships security updates underneath it:
+              # mesa 25.0.7-2+deb13u1 (CVE-2026-40393) landed 19 Jun 2026 but did not reach
+              # the image until the 19 Aug build, 61 days later, because nothing triggered
+              # a rebuild between 5 Jun and 19 Aug.
+              if [[ "$SHOULD_BUILD" != "true" && "${MAX_IMAGE_AGE_DAYS:-30}" != "0" ]]; then
+                CREATED=$(crane config "${{ env.GHCR_REPO }}:latest" 2>/dev/null | jq -r '.created // empty' || echo "")
+                if [[ -n "$CREATED" ]]; then
+                  CREATED_EPOCH=$(date -d "$CREATED" +%s 2>/dev/null || echo 0)
+                  if [[ "$CREATED_EPOCH" -gt 0 ]]; then
+                    AGE_DAYS=$(( ( $(date +%s) - CREATED_EPOCH ) / 86400 ))
+                    if [[ "$AGE_DAYS" -ge "${MAX_IMAGE_AGE_DAYS}" ]]; then
+                      echo "Published image is ${AGE_DAYS}d old (>= ${MAX_IMAGE_AGE_DAYS}d) -- rebuilding to pick up Debian package updates"
+                      SHOULD_BUILD="true"
+                      STALE_REBUILD="true"
+                    else
+                      echo "Published image is ${AGE_DAYS}d old (< ${MAX_IMAGE_AGE_DAYS}d) -- no package-refresh rebuild"
+                    fi
+                  fi
+                else
+                  echo "::warning::Could not read the creation date of :latest -- skipping the image age check"
+                fi
               fi
 
               if [[ "$TAG_AS_LATEST" == "true" && "$SHOULD_BUILD" == "true" ]]; then
@@ -366,6 +395,7 @@ jobs:
           echo "image_tag=$IMAGE_TAG" >> "$GITHUB_OUTPUT"
           echo "date_tag=$DATE_TAG" >> "$GITHUB_OUTPUT"
           echo "latest_needs_promote=$LATEST_NEEDS_PROMOTE" >> "$GITHUB_OUTPUT"
+          echo "stale_rebuild=$STALE_REBUILD" >> "$GITHUB_OUTPUT"
 
           echo "Build decision: should_build=$SHOULD_BUILD"
           echo "  ffmpeg=$FFMPEG_VERSION"
@@ -400,7 +430,11 @@ jobs:
         id: final-build-decision
         if: steps.determine.outputs.should_build == 'true'
         run: |
-          if [[ "${{ steps.check-existing.outputs.exists }}" == "true" && "${{ github.event.inputs.force_build || 'false' }}" != "true" ]]; then
+          # A package-refresh rebuild reuses the same version tag on purpose, so the
+          # existence check must not veto it -- only the dated tag differs.
+          if [[ "${{ steps.check-existing.outputs.exists }}" == "true" \
+                && "${{ github.event.inputs.force_build || 'false' }}" != "true" \
+                && "${{ steps.determine.outputs.stale_rebuild }}" != "true" ]]; then
             echo "Tag already exists and force_build not set — skipping build"
             echo "should_build=false" >> "$GITHUB_OUTPUT"
           else
