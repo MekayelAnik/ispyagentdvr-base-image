@@ -1077,6 +1077,7 @@ jobs:
         env:
           IMAGE_TAG: ${{ needs.check-releases.outputs.image_tag }}
           FFMPEG_VERSION: ${{ needs.check-releases.outputs.ffmpeg_version }}
+          DATE_TAG: ${{ needs.check-releases.outputs.date_tag }}
         run: |
           set -euo pipefail
           if [[ ! -f README.md ]]; then
@@ -1084,8 +1085,19 @@ jobs:
             exit 0
           fi
 
+          # Order matters: rewrite the dated tag first. The generic ffmpeg-version
+          # substitution below stops at the '-' before the date, so it would leave a
+          # stale (or placeholder) date in place forever -- which is how DDMMYYYY
+          # survived in the Available Tags table.
+          sed -i -E "s#ispy-ffmpeg-[0-9][0-9.]*-(DDMMYYYY|[0-9]{8})#ispy-ffmpeg-${FFMPEG_VERSION}-${DATE_TAG}#g" README.md
+
           sed -i "s|ispy-ffmpeg-[0-9.]*-intel-[0-9.]*|ispy-ffmpeg-${FFMPEG_VERSION}|g" README.md
           sed -i "s|ispy-ffmpeg-[0-9][0-9.]*|ispy-ffmpeg-${FFMPEG_VERSION}|g" README.md
+
+          # The Upstream Sources table carries a bare version outside any tag string,
+          # so neither substitution above reaches it; it sat at 8.1 while the tags
+          # had moved to 9.0.1.
+          sed -i -E "s#(\| iSpy FFmpeg \|[^|]*\| )[0-9][0-9.]*( \|)#\1${FFMPEG_VERSION}\2#" README.md
 
       - name: Commit and push
         run: |
