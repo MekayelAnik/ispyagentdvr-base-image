@@ -104,6 +104,19 @@ read -r build stale <<< "$(decide 40 false true)"
 [ "$build" = "true" ] || fail "default should be enabled"
 echo "  defaults to true"
 
+# The job-level exemption is worthless unless the per-platform existence check
+# honours it too -- otherwise every platform build skips and the refresh is a no-op.
+platform_skips() { # $1=force_build $2=stale_rebuild $3=tag exists
+  if [[ "$1" == "true" || "$2" == "true" ]]; then echo "false"; return; fi
+  [[ "$3" == "true" ]] && echo "true" || echo "false"
+}
+echo "== per-platform existence check honours the refresh =="
+[ "$(platform_skips false true true)" = "false" ] || fail "platform build skipped during a package refresh -- refresh would produce nothing"
+[ "$(platform_skips true false true)" = "false" ] || fail "force_build did not bypass the platform check"
+[ "$(platform_skips false false true)" = "true" ] || fail "platform check no longer skips an existing tag"
+[ "$(platform_skips false false false)" = "false" ] || fail "platform build skipped a missing tag"
+echo "  refresh builds, normal skip behaviour intact"
+
 echo "== unreadable creation date degrades safely =="
 read -r build stale <<< "$(decide none false true)"
 [ "$build" = "false" ] || fail "built on an unreadable creation date"
