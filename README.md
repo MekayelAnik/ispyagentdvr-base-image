@@ -16,7 +16,7 @@ Base image for [iSpy Agent DVR](https://www.ispyconnect.com/) Docker builds with
 |-----|-------------|
 | `latest` | Latest successful build |
 | `trixie-slim-vlc-ispy-ffmpeg-9.0.1` | Version-pinned rolling tag |
-| `trixie-slim-vlc-ispy-ffmpeg-9.0.1-19082026` | Date-stamped build |
+| `trixie-slim-vlc-ispy-ffmpeg-9.0.1-20082026` | Date-stamped build |
 
 ## Usage
 
