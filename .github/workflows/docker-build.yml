@@ -105,8 +105,22 @@ env:
   DEBIAN_BASE: ${{ vars.DEBIAN_BASE || 'trixie-slim' }}
   DEFAULT_BASE_IMAGE: ${{ vars.DEFAULT_BASE_IMAGE || format('debian:{0}', vars.DEBIAN_BASE || 'trixie-slim') }}
   # Rebuild even with no upstream FFmpeg change once the published image is this old,
-  # so Debian security updates actually reach the image. Set to 0 to disable.
-  MAX_IMAGE_AGE_DAYS: ${{ vars.MAX_IMAGE_AGE_DAYS || '30' }}
+  # so Debian security updates actually reach the image.
+  #
+  # Resolution order (highest first): repository_dispatch client_payload, repo variable,
+  # built-in default. Deliberately resolved in shell rather than a GitHub expression:
+  # `x != null && x || y` collapses an explicit `false` back to `y`.
+  #
+  #   {"event_type":"Docker Build & Publish - Cron Scheduled",
+  #    "client_payload":{"package_refresh":false,"max_image_age_days":14}}
+  # repository_dispatch never populates github.event.inputs, so a documented payload
+  # like {"client_payload":{"force_build":"true"}} was silently ignored. Accept both,
+  # workflow_dispatch input first. Values may be JSON booleans or strings.
+  FORCE_BUILD: ${{ github.event.inputs.force_build || github.event.client_payload.force_build || 'false' }}
+  CP_PACKAGE_REFRESH: ${{ github.event.client_payload.package_refresh }}
+  CP_MAX_IMAGE_AGE_DAYS: ${{ github.event.client_payload.max_image_age_days }}
+  VAR_PACKAGE_REFRESH: ${{ vars.PACKAGE_REFRESH_ENABLED }}
+  VAR_MAX_IMAGE_AGE_DAYS: ${{ vars.MAX_IMAGE_AGE_DAYS }}
 
 jobs:
   # ===========================================================================
@@ -124,7 +138,7 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           ACTION: ${{ github.event.inputs.action || 'auto-check' }}
-          FORCE_BUILD: ${{ github.event.inputs.force_build || 'false' }}
+          FORCE_BUILD: ${{ env.FORCE_BUILD }}
         run: |
           set -euo pipefail
           if [[ "$EVENT_NAME" == "workflow_dispatch" && "$ACTION" != "auto-check" ]]; then
@@ -268,7 +282,7 @@ jobs:
         id: determine
         env:
           ACTION: ${{ steps.set-action.outputs.action }}
-          FORCE_BUILD: ${{ github.event.inputs.force_build || 'false' }}
+          FORCE_BUILD: ${{ env.FORCE_BUILD }}
           UPSTREAM_FFMPEG: ${{ steps.fetch-ffmpeg.outputs.version }}
           FFMPEG_AVAILABLE: ${{ steps.fetch-ffmpeg.outputs.available }}
           STORED_FFMPEG: ${{ steps.read-state.outputs.stored_ffmpeg }}
@@ -311,7 +325,9 @@ jobs:
               # mesa 25.0.7-2+deb13u1 (CVE-2026-40393) landed 19 Jun 2026 but did not reach
               # the image until the 19 Aug build, 61 days later, because nothing triggered
               # a rebuild between 5 Jun and 19 Aug.
-              if [[ "$SHOULD_BUILD" != "true" && "${MAX_IMAGE_AGE_DAYS:-30}" != "0" ]]; then
+              PACKAGE_REFRESH="${CP_PACKAGE_REFRESH:-${VAR_PACKAGE_REFRESH:-true}}"
+              MAX_IMAGE_AGE_DAYS="${CP_MAX_IMAGE_AGE_DAYS:-${VAR_MAX_IMAGE_AGE_DAYS:-30}}"
+              if [[ "$SHOULD_BUILD" != "true" && "$PACKAGE_REFRESH" == "true" && "$MAX_IMAGE_AGE_DAYS" != "0" ]]; then
                 CREATED=$(crane config "${{ env.GHCR_REPO }}:latest" 2>/dev/null | jq -r '.created // empty' || echo "")
                 if [[ -n "$CREATED" ]]; then
                   CREATED_EPOCH=$(date -d "$CREATED" +%s 2>/dev/null || echo 0)
@@ -328,6 +344,8 @@ jobs:
                 else
                   echo "::warning::Could not read the creation date of :latest -- skipping the image age check"
                 fi
+              elif [[ "$SHOULD_BUILD" != "true" ]]; then
+                echo "Package-refresh rebuild disabled (package_refresh=$PACKAGE_REFRESH, max_image_age_days=$MAX_IMAGE_AGE_DAYS)"
               fi
 
               if [[ "$TAG_AS_LATEST" == "true" && "$SHOULD_BUILD" == "true" ]]; then
@@ -408,7 +426,7 @@ jobs:
         if: steps.determine.outputs.should_build == 'true'
         env:
           IMAGE_TAG: ${{ steps.determine.outputs.image_tag }}
-          FORCE_BUILD: ${{ github.event.inputs.force_build || 'false' }}
+          FORCE_BUILD: ${{ env.FORCE_BUILD }}
         run: |
           set -euo pipefail
           if [[ "$FORCE_BUILD" == "true" ]]; then
@@ -433,7 +451,7 @@ jobs:
           # A package-refresh rebuild reuses the same version tag on purpose, so the
           # existence check must not veto it -- only the dated tag differs.
           if [[ "${{ steps.check-existing.outputs.exists }}" == "true" \
-                && "${{ github.event.inputs.force_build || 'false' }}" != "true" \
+                && "${{ env.FORCE_BUILD }}" != "true" \
                 && "${{ steps.determine.outputs.stale_rebuild }}" != "true" ]]; then
             echo "Tag already exists and force_build not set — skipping build"
             echo "should_build=false" >> "$GITHUB_OUTPUT"
@@ -531,7 +549,7 @@ jobs:
       - name: Check if platform tag exists
         id: check-tag
         env:
-          FORCE_BUILD: ${{ github.event.inputs.force_build || 'false' }}
+          FORCE_BUILD: ${{ env.FORCE_BUILD }}
           GHCR_REPO: ${{ env.GHCR_REPO }}
           VERSION: ${{ needs.check-releases.outputs.image_tag }}
         run: |

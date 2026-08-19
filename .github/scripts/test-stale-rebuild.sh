@@ -8,15 +8,20 @@
 set -uo pipefail
 fail() { echo "FAIL: $*"; exit 1; }
 
-# $1 = age of :latest in days ("none" = unreadable), $2 = ffmpeg changed?,
-# $3 = MAX_IMAGE_AGE_DAYS, $4 = tag already exists?
+# $1 = age of :latest in days ("none" = unreadable), $2 = ffmpeg changed?, $3 = tag exists?
+# Threshold and enable flag come from CP_*/VAR_* env, mirroring the workflow.
 decide() {
-  local age=$1 ffmpeg_changed=$2 MAX_IMAGE_AGE_DAYS=$3 tag_exists=$4
+  local age=$1 ffmpeg_changed=$2 tag_exists=$3
   local SHOULD_BUILD="false" STALE_REBUILD="false"
 
   [[ "$ffmpeg_changed" == "true" ]] && SHOULD_BUILD="true"
 
-  if [[ "$SHOULD_BUILD" != "true" && "${MAX_IMAGE_AGE_DAYS:-30}" != "0" ]]; then
+  # Same precedence chain as the workflow: client_payload > repo var > default.
+  local PACKAGE_REFRESH MAX_IMAGE_AGE_DAYS
+  PACKAGE_REFRESH="${CP_PACKAGE_REFRESH:-${VAR_PACKAGE_REFRESH:-true}}"
+  MAX_IMAGE_AGE_DAYS="${CP_MAX_IMAGE_AGE_DAYS:-${VAR_MAX_IMAGE_AGE_DAYS:-30}}"
+
+  if [[ "$SHOULD_BUILD" != "true" && "$PACKAGE_REFRESH" == "true" && "$MAX_IMAGE_AGE_DAYS" != "0" ]]; then
     local CREATED=""
     [[ "$age" != "none" ]] && CREATED=$(date -u -d "${age} days ago" +%Y-%m-%dT%H:%M:%SZ)
     if [[ -n "$CREATED" ]]; then
@@ -41,44 +46,66 @@ decide() {
 }
 
 echo "== fresh image, no upstream change =="
-read -r build stale <<< "$(decide 5 false 30 true)"
+read -r build stale <<< "$(decide 5 false true)"
 [ "$build" = "false" ] || fail "rebuilt a 5-day-old image (build=$build)"
 echo "  no rebuild (build=$build stale=$stale)"
 
 echo "== 29 days: still inside the window =="
-read -r build stale <<< "$(decide 29 false 30 true)"
+read -r build stale <<< "$(decide 29 false true)"
 [ "$build" = "false" ] || fail "rebuilt at 29d, threshold is 30d"
 echo "  no rebuild"
 
 echo "== 30 days: threshold reached =="
-read -r build stale <<< "$(decide 30 false 30 true)"
+read -r build stale <<< "$(decide 30 false true)"
 [ "$build" = "true" ] || fail "no rebuild at exactly 30d"
 [ "$stale" = "true" ] || fail "stale_rebuild flag not set"
 echo "  rebuilds despite the tag already existing"
 
 echo "== 75 days: the real 5 Jun -> 19 Aug gap =="
-read -r build stale <<< "$(decide 75 false 30 true)"
+read -r build stale <<< "$(decide 75 false true)"
 [ "$build" = "true" ] || fail "no rebuild after 75d -- the mesa CVE gap would recur"
 echo "  rebuilds"
 
 echo "== upstream change wins, and is not marked stale =="
-read -r build stale <<< "$(decide 1 true 30 false)"
+read -r build stale <<< "$(decide 1 true false)"
 [ "$build" = "true" ] || fail "upstream change did not build"
 [ "$stale" = "false" ] || fail "upstream build wrongly flagged as a package refresh"
 echo "  normal version build, stale flag clear"
 
 echo "== tag-exists veto still applies to a non-stale build =="
-read -r build stale <<< "$(decide 1 true 30 true)"
+read -r build stale <<< "$(decide 1 true true)"
 [ "$build" = "false" ] || fail "existing tag was rebuilt without the stale flag"
 echo "  veto intact"
 
-echo "== disabled with MAX_IMAGE_AGE_DAYS=0 =="
-read -r build stale <<< "$(decide 400 false 0 true)"
+echo "== disabled via repo var MAX_IMAGE_AGE_DAYS=0 =="
+read -r build stale <<< "$(VAR_MAX_IMAGE_AGE_DAYS=0 decide 400 false true)"
 [ "$build" = "false" ] || fail "age check ran while disabled"
 echo "  no rebuild"
 
+echo "== disabled via dispatch payload package_refresh=false =="
+read -r build stale <<< "$(CP_PACKAGE_REFRESH=false decide 400 false true)"
+[ "$build" = "false" ] || fail "dispatch payload false was ignored -- the GitHub-expression trap"
+echo "  no rebuild"
+
+echo "== dispatch payload package_refresh=true overrides a repo var of false =="
+read -r build stale <<< "$(CP_PACKAGE_REFRESH=true VAR_PACKAGE_REFRESH=false decide 40 false true)"
+[ "$build" = "true" ] || fail "client_payload did not win over the repo var"
+echo "  rebuilds"
+
+echo "== dispatch payload max_image_age_days=14 tightens the window =="
+read -r build stale <<< "$(CP_MAX_IMAGE_AGE_DAYS=14 decide 20 false true)"
+[ "$build" = "true" ] || fail "20d image not rebuilt under a 14d threshold"
+read -r build stale <<< "$(CP_MAX_IMAGE_AGE_DAYS=14 decide 10 false true)"
+[ "$build" = "false" ] || fail "10d image rebuilt under a 14d threshold"
+echo "  honours the payload threshold both ways"
+
+echo "== default is enabled when nothing is configured =="
+read -r build stale <<< "$(decide 40 false true)"
+[ "$build" = "true" ] || fail "default should be enabled"
+echo "  defaults to true"
+
 echo "== unreadable creation date degrades safely =="
-read -r build stale <<< "$(decide none false 30 true)"
+read -r build stale <<< "$(decide none false true)"
 [ "$build" = "false" ] || fail "built on an unreadable creation date"
 echo "  skipped, no build"
 
