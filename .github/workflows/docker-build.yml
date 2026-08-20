@@ -1,14 +1,18 @@
 # =============================================================================
 # ispyagentdvr-base-image Docker Build & Publish
 # =============================================================================
-# Monitors iSpy FFmpeg (files.ispyconnect.com) for new releases.
-# Builds multi-arch Docker images when upstream has a new version.
+# Monitors the Debian base image for new digests (security updates).
+# Builds multi-arch Docker images when the base image changes.
+#
+# FFmpeg is NOT installed in this image any more: the AgentDVR package
+# bundles its own FFmpeg (LGPL) build, and the optional GPL build is
+# downloaded by the app at runtime.
 #
 # Triggers:
 #   - repository_dispatch (cron-job.org external trigger)
 #   - workflow_dispatch (manual)
 #
-# Variant built: trixie-slim-vlc-ispy-ffmpeg-{VER}
+# Variant built: trixie-slim-vlc
 # Platforms: linux/amd64, linux/arm64, linux/arm/v7
 # Registries: GHCR + Docker Hub
 #
@@ -38,10 +42,6 @@ on:
           - retag-latest
           - sync-registries
         default: auto-check
-      ffmpeg_version:
-        description: 'Override iSpy FFmpeg version (e.g. 8.1)'
-        required: false
-        type: string
       force_build:
         description: 'Force build even if tag exists'
         required: false
@@ -53,7 +53,7 @@ on:
         type: boolean
         default: true
       retag_source:
-        description: 'Existing tag to promote as latest, e.g. trixie-slim-vlc-ispy-ffmpeg-8.1 (for retag-latest action)'
+        description: 'Existing tag to promote as latest, e.g. trixie-slim-vlc-20082026 (for retag-latest action)'
         required: false
         type: string
       push_to_dockerhub:
@@ -104,7 +104,7 @@ env:
   DEFAULT_PLATFORMS: ${{ vars.DEFAULT_PLATFORMS || 'linux/amd64,linux/arm64,linux/arm/v7' }}
   DEBIAN_BASE: ${{ vars.DEBIAN_BASE || 'trixie-slim' }}
   DEFAULT_BASE_IMAGE: ${{ vars.DEFAULT_BASE_IMAGE || format('debian:{0}', vars.DEBIAN_BASE || 'trixie-slim') }}
-  # Rebuild even with no upstream FFmpeg change once the published image is this old,
+  # Rebuild even with no Debian base digest change once the published image is this old,
   # so Debian security updates actually reach the image.
   #
   # Resolution order (highest first): repository_dispatch client_payload, repo variable,
@@ -168,7 +168,7 @@ jobs:
       packages: read
     outputs:
       should_build: ${{ steps.final-build-decision.outputs.should_build || steps.determine.outputs.should_build }}
-      ffmpeg_version: ${{ steps.determine.outputs.ffmpeg_version }}
+      base_digest: ${{ steps.determine.outputs.base_digest }}
       image_tag: ${{ steps.determine.outputs.image_tag }}
       date_tag: ${{ steps.determine.outputs.date_tag }}
       action_type: ${{ steps.set-action.outputs.action }}
@@ -229,36 +229,19 @@ jobs:
           ghcr_actor: ${{ github.actor }}
           ghcr_token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Fetch iSpy FFmpeg release
-        id: fetch-ffmpeg
+      - name: Fetch Debian base digest
+        id: fetch-base
         run: |
           set -euo pipefail
-          echo "::group::Fetching iSpy FFmpeg version (files.ispyconnect.com)"
+          echo "::group::Resolving Debian base image digest"
 
-          VERSION_URL="https://files.ispyconnect.com/libs/ffmpeg_version.txt"
-          VERSION=$(curl -fsSL "$VERSION_URL" 2>/dev/null | tr -d '[:space:]' || echo '')
-
-          if [[ -z "$VERSION" ]]; then
-            echo "::warning::Failed to fetch iSpy FFmpeg version from $VERSION_URL"
-            echo "version=" >> "$GITHUB_OUTPUT"
-            echo "available=false" >> "$GITHUB_OUTPUT"
-            exit 0
+          DIGEST=$(crane digest "${DEFAULT_BASE_IMAGE}" 2>/dev/null || echo '')
+          if [[ -z "$DIGEST" ]]; then
+            echo "::warning::Failed to resolve digest for ${DEFAULT_BASE_IMAGE}"
           fi
 
-          # Verify prebuilt tarballs exist for every required arch
-          AVAILABLE="true"
-          for A in arm64 armhf x86_64; do
-            URL="https://files.ispyconnect.com/libs/ffmpeg${VERSION}-linux-${A}.tar.xz"
-            CODE=$(curl -fsSL -o /dev/null -I -w '%{http_code}' "$URL" 2>/dev/null || echo "000")
-            if [[ "$CODE" != "200" && "$CODE" != "206" ]]; then
-              echo "::warning::Missing iSpy FFmpeg tarball for $A (HTTP $CODE): $URL"
-              AVAILABLE="false"
-            fi
-          done
-
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "available=$AVAILABLE" >> "$GITHUB_OUTPUT"
-          echo "iSpy FFmpeg: $VERSION (tarballs available: $AVAILABLE)"
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+          echo "${DEFAULT_BASE_IMAGE}: ${DIGEST:-<unresolved>}"
           echo "::endgroup::"
 
       - name: Read pipeline state
@@ -272,10 +255,10 @@ jobs:
           STATE_JSON=$(gh api "repos/${{ github.repository }}/contents/state.json?ref=pipeline-state" \
             --jq '.content' 2>/dev/null | base64 -d 2>/dev/null || echo '{}')
 
-          STORED_FFMPEG=$(echo "$STATE_JSON" | jq -r '.ffmpeg_version // ""')
+          STORED_DIGEST=$(echo "$STATE_JSON" | jq -r '.base_digest // ""')
 
-          echo "stored_ffmpeg=$STORED_FFMPEG" >> "$GITHUB_OUTPUT"
-          echo "State: ffmpeg=$STORED_FFMPEG"
+          echo "stored_base_digest=$STORED_DIGEST" >> "$GITHUB_OUTPUT"
+          echo "State: base_digest=$STORED_DIGEST"
           echo "::endgroup::"
 
       - name: Determine build versions
@@ -283,48 +266,38 @@ jobs:
         env:
           ACTION: ${{ steps.set-action.outputs.action }}
           FORCE_BUILD: ${{ env.FORCE_BUILD }}
-          UPSTREAM_FFMPEG: ${{ steps.fetch-ffmpeg.outputs.version }}
-          FFMPEG_AVAILABLE: ${{ steps.fetch-ffmpeg.outputs.available }}
-          STORED_FFMPEG: ${{ steps.read-state.outputs.stored_ffmpeg }}
-          MANUAL_FFMPEG: ${{ github.event.inputs.ffmpeg_version }}
+          UPSTREAM_DIGEST: ${{ steps.fetch-base.outputs.digest }}
+          STORED_DIGEST: ${{ steps.read-state.outputs.stored_base_digest }}
           TAG_AS_LATEST: ${{ github.event.inputs.tag_as_latest || 'true' }}
         run: |
           set -euo pipefail
-          echo "::group::Determining build versions"
+          echo "::group::Determining build"
 
           DATE_TAG=$(TZ="${TZ}" date +%d%m%Y)
           SHOULD_BUILD="false"
           LATEST_NEEDS_PROMOTE="false"
           STALE_REBUILD="false"
-
-          FFMPEG_VERSION="${MANUAL_FFMPEG:-$UPSTREAM_FFMPEG}"
-
-          FFMPEG_VERSION="${FFMPEG_VERSION#v}"
+          IMAGE_TAG="${DEBIAN_BASE}-vlc"
 
           case "$ACTION" in
             auto-check)
-              FFMPEG_CHANGED="false"
-
-              if [[ -n "$FFMPEG_VERSION" && "$FFMPEG_VERSION" != "$STORED_FFMPEG" && "$FFMPEG_AVAILABLE" == "true" ]]; then
-                echo "iSpy FFmpeg changed: $STORED_FFMPEG → $FFMPEG_VERSION (tarballs available)"
-                FFMPEG_CHANGED="true"
-              elif [[ "$FFMPEG_AVAILABLE" != "true" && -n "$FFMPEG_VERSION" && "$FFMPEG_VERSION" != "$STORED_FFMPEG" ]]; then
-                echo "::warning::iSpy FFmpeg $FFMPEG_VERSION tarballs unavailable — skipping"
-              fi
-
-              if [[ "$FFMPEG_CHANGED" == "true" ]]; then
+              # Rebuild when the Debian base image publishes a new digest, so
+              # security updates flow in promptly via dist-upgrade.
+              if [[ -n "$UPSTREAM_DIGEST" && "$UPSTREAM_DIGEST" != "$STORED_DIGEST" ]]; then
+                echo "Debian base changed: ${STORED_DIGEST:-<none>} → $UPSTREAM_DIGEST"
                 SHOULD_BUILD="true"
+              elif [[ -z "$UPSTREAM_DIGEST" ]]; then
+                echo "::warning::Could not resolve the Debian base digest"
+              else
+                echo "Debian base unchanged ($UPSTREAM_DIGEST)"
               fi
 
-              if [[ "$FFMPEG_CHANGED" != "true" && -n "$STORED_FFMPEG" ]]; then
-                FFMPEG_VERSION="$STORED_FFMPEG"
-              fi
-
-              # Debian package refresh. Upstream FFmpeg moves rarely, so without this the
-              # image can sit for months while trixie ships security updates underneath it:
-              # mesa 25.0.7-2+deb13u1 (CVE-2026-40393) landed 19 Jun 2026 but did not reach
-              # the image until the 19 Aug build, 61 days later, because nothing triggered
-              # a rebuild between 5 Jun and 19 Aug.
+              # Debian package refresh, kept as a safety net: the digest check above
+              # covers a moving debian:trixie-slim, but packages installed at build
+              # time (VAAPI drivers, VLC) also take security updates between base
+              # digest bumps. mesa 25.0.7-2+deb13u1 (CVE-2026-40393) landed 19 Jun
+              # 2026 but did not reach the image until the 19 Aug build, 61 days
+              # later, because nothing triggered a rebuild between 5 Jun and 19 Aug.
               PACKAGE_REFRESH="${CP_PACKAGE_REFRESH:-${VAR_PACKAGE_REFRESH:-true}}"
               MAX_IMAGE_AGE_DAYS="${CP_MAX_IMAGE_AGE_DAYS:-${VAR_MAX_IMAGE_AGE_DAYS:-30}}"
               if [[ "$SHOULD_BUILD" != "true" && "$PACKAGE_REFRESH" == "true" && "$MAX_IMAGE_AGE_DAYS" != "0" ]]; then
@@ -351,7 +324,6 @@ jobs:
               if [[ "$TAG_AS_LATEST" == "true" && "$SHOULD_BUILD" == "true" ]]; then
                 LATEST_NEEDS_PROMOTE="true"
               elif [[ "$TAG_AS_LATEST" == "true" ]]; then
-                IMAGE_TAG="${DEBIAN_BASE}-vlc-ispy-ffmpeg-${FFMPEG_VERSION}"
                 GHCR_PREFIX="${{ env.GHCR_REPO }}"
                 VERSION_DIGEST=$(crane digest "${GHCR_PREFIX}:${IMAGE_TAG}" 2>/dev/null || echo "none")
                 LATEST_DIGEST=$(crane digest "${GHCR_PREFIX}:latest" 2>/dev/null || echo "missing")
@@ -369,9 +341,6 @@ jobs:
             promote-latest|force-promote-latest)
               SHOULD_BUILD="false"
               LATEST_NEEDS_PROMOTE="true"
-              if [[ -z "$FFMPEG_VERSION" && -n "$STORED_FFMPEG" ]]; then
-                FFMPEG_VERSION="$STORED_FFMPEG"
-              fi
               ;;
 
             retag-latest)
@@ -386,9 +355,6 @@ jobs:
 
             sync-registries)
               SHOULD_BUILD="false"
-              if [[ -z "$FFMPEG_VERSION" && -n "$STORED_FFMPEG" ]]; then
-                FFMPEG_VERSION="$STORED_FFMPEG"
-              fi
               ;;
           esac
 
@@ -399,24 +365,17 @@ jobs:
 
           if [[ "$ACTION" == "retag-latest" ]]; then
             IMAGE_TAG="${RETAG_SOURCE}"
-          else
-            IMAGE_TAG="${DEBIAN_BASE}-vlc-ispy-ffmpeg-${FFMPEG_VERSION}"
-          fi
-
-          if [[ "$ACTION" != "retag-latest" && -z "$FFMPEG_VERSION" ]]; then
-            echo "::error::Missing required version: ffmpeg=$FFMPEG_VERSION"
-            SHOULD_BUILD="false"
           fi
 
           echo "should_build=$SHOULD_BUILD" >> "$GITHUB_OUTPUT"
-          echo "ffmpeg_version=$FFMPEG_VERSION" >> "$GITHUB_OUTPUT"
+          echo "base_digest=$UPSTREAM_DIGEST" >> "$GITHUB_OUTPUT"
           echo "image_tag=$IMAGE_TAG" >> "$GITHUB_OUTPUT"
           echo "date_tag=$DATE_TAG" >> "$GITHUB_OUTPUT"
           echo "latest_needs_promote=$LATEST_NEEDS_PROMOTE" >> "$GITHUB_OUTPUT"
           echo "stale_rebuild=$STALE_REBUILD" >> "$GITHUB_OUTPUT"
 
           echo "Build decision: should_build=$SHOULD_BUILD"
-          echo "  ffmpeg=$FFMPEG_VERSION"
+          echo "  base_digest=$UPSTREAM_DIGEST"
           echo "  tag=$IMAGE_TAG"
           echo "  date=$DATE_TAG"
           echo "::endgroup::"
@@ -426,6 +385,7 @@ jobs:
         if: steps.determine.outputs.should_build == 'true'
         env:
           IMAGE_TAG: ${{ steps.determine.outputs.image_tag }}
+          DATE_TAG: ${{ steps.determine.outputs.date_tag }}
           FORCE_BUILD: ${{ env.FORCE_BUILD }}
         run: |
           set -euo pipefail
@@ -435,12 +395,15 @@ jobs:
             exit 0
           fi
 
-          DIGEST=$(crane digest "${{ env.GHCR_REPO }}:${IMAGE_TAG}" 2>/dev/null || echo "")
+          # The version tag is a rolling tag now, so uniqueness is judged on the
+          # dated tag (suppresses duplicate builds on same-day re-runs).
+          DATED_TAG="${IMAGE_TAG}-${DATE_TAG}"
+          DIGEST=$(crane digest "${{ env.GHCR_REPO }}:${DATED_TAG}" 2>/dev/null || echo "")
           if [[ -n "$DIGEST" ]]; then
-            echo "::warning::Tag ${IMAGE_TAG} already exists in GHCR (digest: $DIGEST)"
+            echo "::warning::Tag ${DATED_TAG} already exists in GHCR (digest: $DIGEST)"
             echo "exists=true" >> "$GITHUB_OUTPUT"
           else
-            echo "Tag ${IMAGE_TAG} not found in GHCR — will build"
+            echo "Tag ${DATED_TAG} not found in GHCR — will build"
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
@@ -556,7 +519,7 @@ jobs:
           # nothing at all.
           STALE_REBUILD: ${{ needs.check-releases.outputs.stale_rebuild }}
           GHCR_REPO: ${{ env.GHCR_REPO }}
-          VERSION: ${{ needs.check-releases.outputs.image_tag }}
+          VERSION: ${{ needs.check-releases.outputs.image_tag }}-${{ needs.check-releases.outputs.date_tag }}
         run: |
           set -euo pipefail
           if [[ "${FORCE_BUILD:-}" == "true" || "${STALE_REBUILD:-}" == "true" ]]; then
@@ -576,7 +539,6 @@ jobs:
         id: prepare
         if: steps.check-tag.outputs.skip_build != 'true'
         env:
-          FFMPEG_VERSION: ${{ needs.check-releases.outputs.ffmpeg_version }}
           IMAGE_TAG: ${{ needs.check-releases.outputs.image_tag }}
           DATE_TAG: ${{ needs.check-releases.outputs.date_tag }}
         run: |
@@ -584,7 +546,6 @@ jobs:
 
           mkdir -p resources/build_data
           echo "${DEFAULT_BASE_IMAGE}" > resources/build_data/BASE_IMAGE
-          echo "${FFMPEG_VERSION}" > resources/build_data/FFMPEG_VERSION
           touch resources/build_data/vlc
           touch resources/build_data/hwaccel
           echo "Build started: $(TZ="${TZ}" date +'%Y-%m-%dT%H:%M:%S%z')" > resources/build_data/base-image-timestamp
@@ -1030,19 +991,20 @@ jobs:
 
       - name: Write state
         env:
-          FFMPEG_VERSION: ${{ needs.check-releases.outputs.ffmpeg_version }}
+          BASE_DIGEST: ${{ needs.check-releases.outputs.base_digest }}
           IMAGE_TAG: ${{ needs.check-releases.outputs.image_tag }}
         run: |
           set -euo pipefail
           cat > state.json <<EOF
           {
-            "ffmpeg_version": "${FFMPEG_VERSION}",
+            "base_digest": "${BASE_DIGEST}",
             "image_tag": "${IMAGE_TAG}",
             "updated_at": "$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
           }
           EOF
 
-          echo "${FFMPEG_VERSION}" > ffmpeg-version
+          echo "${BASE_DIGEST}" > base-digest
+          rm -f ffmpeg-version
           date -u +'%Y-%m-%dT%H:%M:%SZ' > last-built-time
 
       - name: Commit and push state
@@ -1087,14 +1049,12 @@ jobs:
       - name: Update resource files
         env:
           IMAGE_TAG: ${{ needs.check-releases.outputs.image_tag }}
-          FFMPEG_VERSION: ${{ needs.check-releases.outputs.ffmpeg_version }}
         run: |
           set -euo pipefail
-          mkdir -p resources/build_data
 
           echo "${IMAGE_TAG}" > resources/tag
           date -u +'%Y-%m-%dT%H:%M:%SZ' > resources/build-timestamp
-          echo "${FFMPEG_VERSION}" > resources/build_data/FFMPEG_VERSION
+          rm -f resources/build_data/FFMPEG_VERSION
 
       - name: Commit and push
         run: |
@@ -1112,73 +1072,13 @@ jobs:
           echo "::warning::Failed to push metadata after 3 attempts"
 
   # ===========================================================================
-  # Job 7: Update README version
-  # ===========================================================================
-  update-readme-version:
-    timeout-minutes: 15
-    name: Update README
-    needs: [check-releases, promote-latest, update-metadata]
-    if: needs.promote-latest.result == 'success'
-    runs-on: ${{ vars.ACTION_RUNNER_VERSION || 'ubuntu-latest' }}
-    permissions:
-      contents: write
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-        with:
-          ref: main
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Update version in README
-        env:
-          IMAGE_TAG: ${{ needs.check-releases.outputs.image_tag }}
-          FFMPEG_VERSION: ${{ needs.check-releases.outputs.ffmpeg_version }}
-          DATE_TAG: ${{ needs.check-releases.outputs.date_tag }}
-        run: |
-          set -euo pipefail
-          if [[ ! -f README.md ]]; then
-            echo "No README.md found — skipping"
-            exit 0
-          fi
-
-          # Order matters: rewrite the dated tag first. The generic ffmpeg-version
-          # substitution below stops at the '-' before the date, so it would leave a
-          # stale (or placeholder) date in place forever -- which is how DDMMYYYY
-          # survived in the Available Tags table.
-          sed -i -E "s#ispy-ffmpeg-[0-9][0-9.]*-(DDMMYYYY|[0-9]{8})#ispy-ffmpeg-${FFMPEG_VERSION}-${DATE_TAG}#g" README.md
-
-          sed -i "s|ispy-ffmpeg-[0-9.]*-intel-[0-9.]*|ispy-ffmpeg-${FFMPEG_VERSION}|g" README.md
-          sed -i "s|ispy-ffmpeg-[0-9][0-9.]*|ispy-ffmpeg-${FFMPEG_VERSION}|g" README.md
-
-          # The Upstream Sources table carries a bare version outside any tag string,
-          # so neither substitution above reaches it; it sat at 8.1 while the tags
-          # had moved to 9.0.1.
-          sed -i -E "s#(\| iSpy FFmpeg \|[^|]*\| )[0-9][0-9.]*( \|)#\1${FFMPEG_VERSION}\2#" README.md
-
-      - name: Commit and push
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add README.md
-          git diff --staged --quiet && { echo "No README changes"; exit 0; }
-          git commit -m "Update README with latest versions [skip ci]"
-          for attempt in 1 2 3; do
-            if git push origin main 2>&1; then exit 0; fi
-            git pull --rebase origin main 2>/dev/null || true
-            sleep $((5 * attempt))
-          done
-          echo "::warning::Failed to push README after 3 attempts"
-
-  # ===========================================================================
-  # Job 8: Update Docker Hub description
+  # Job 7: Update Docker Hub description
   # ===========================================================================
   update-dockerhub-description:
     timeout-minutes: 15
     name: Update Docker Hub Description
-    needs: [update-readme-version]
-    if: always() && needs.update-readme-version.result == 'success'
+    needs: [promote-latest]
+    if: always() && needs.promote-latest.result == 'success'
     runs-on: ${{ vars.ACTION_RUNNER_VERSION || 'ubuntu-latest' }}
 
     steps:
