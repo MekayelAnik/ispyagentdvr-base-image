@@ -27,7 +27,9 @@ bash -c "source /etc/profile.d/env_vars.sh && /resources/install_dependencies.sh
 
 bash -c "source /etc/profile.d/env_vars.sh && /resources/install_gpu_driver.sh"
 
-bash -c "source /etc/profile.d/env_vars.sh && /resources/install_ffmpeg.sh"
+# FFmpeg is no longer installed here: the AgentDVR package bundles its own
+# FFmpeg (LGPL) build, and the optional GPL build is downloaded by the app
+# at runtime to the persisted config volume.
 
 if [ -f /resources/build_data/vlc ]; then
 	bash -c "/resources/install_vlc.sh"

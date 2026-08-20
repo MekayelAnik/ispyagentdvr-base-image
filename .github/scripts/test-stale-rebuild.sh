@@ -2,19 +2,19 @@
 # Self-check for the image-age (Debian package refresh) rebuild decision.
 #
 # Replays the auto-check branch of "Determine build versions" with a stubbed
-# `crane config` so no registry is touched. The rule under test: with no upstream
-# FFmpeg change, rebuild anyway once the published image reaches MAX_IMAGE_AGE_DAYS,
-# and do not let the tag-exists check veto that rebuild.
+# `crane config` so no registry is touched. The rule under test: with no Debian
+# base digest change, rebuild anyway once the published image reaches
+# MAX_IMAGE_AGE_DAYS, and do not let the tag-exists check veto that rebuild.
 set -uo pipefail
 fail() { echo "FAIL: $*"; exit 1; }
 
-# $1 = age of :latest in days ("none" = unreadable), $2 = ffmpeg changed?, $3 = tag exists?
+# $1 = age of :latest in days ("none" = unreadable), $2 = base digest changed?, $3 = tag exists?
 # Threshold and enable flag come from CP_*/VAR_* env, mirroring the workflow.
 decide() {
-  local age=$1 ffmpeg_changed=$2 tag_exists=$3
+  local age=$1 base_changed=$2 tag_exists=$3
   local SHOULD_BUILD="false" STALE_REBUILD="false"
 
-  [[ "$ffmpeg_changed" == "true" ]] && SHOULD_BUILD="true"
+  [[ "$base_changed" == "true" ]] && SHOULD_BUILD="true"
 
   # Same precedence chain as the workflow: client_payload > repo var > default.
   local PACKAGE_REFRESH MAX_IMAGE_AGE_DAYS

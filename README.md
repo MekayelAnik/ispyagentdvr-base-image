@@ -5,18 +5,19 @@ Base image for [iSpy Agent DVR](https://www.ispyconnect.com/) Docker builds with
 ## Features
 
 - Debian Trixie Slim base
-- Self-contained iSpy FFmpeg with hardware acceleration support
 - VAAPI GPU drivers: AMD (Mesa radeonsi), Intel (iHD + i965), NVIDIA (nvidia-vaapi-driver)
 - VLC media framework
 - Multi-architecture: `linux/amd64`, `linux/arm64`, `linux/arm/v7`
+
+FFmpeg is no longer installed in this image: the Agent DVR application package bundles its own FFmpeg (LGPL) build, and the optional GPL build is downloaded by the app on demand at runtime.
 
 ## Available Tags
 
 | Tag | Description |
 |-----|-------------|
 | `latest` | Latest successful build |
-| `trixie-slim-vlc-ispy-ffmpeg-9.0.1` | Version-pinned rolling tag |
-| `trixie-slim-vlc-ispy-ffmpeg-9.0.1-20082026` | Date-stamped build |
+| `trixie-slim-vlc` | Rolling variant tag |
+| `trixie-slim-vlc-DDMMYYYY` | Date-stamped build |
 
 ## Usage
 
@@ -28,11 +29,11 @@ docker pull mekayelanik/ispyagentdvr-base-image:latest
 
 This image tracks one upstream source for new releases:
 
-| Component | Repository | Current Version |
-|-----------|------------|-----------------|
-| iSpy FFmpeg | [files.ispyconnect.com](https://files.ispyconnect.com/libs/ffmpeg_version.txt) | 9.0.1 |
+| Component | Source |
+|-----------|--------|
+| Debian | `debian:trixie-slim` |
 
-A new image build is triggered automatically when upstream publishes a new release (iSpy FFmpeg prebuilt tarballs must be available for all arches). GPU VAAPI drivers are installed from Debian packages at image build time.
+A new image build is triggered automatically when the Debian base image publishes a new digest, with a periodic package-refresh rebuild as a safety net so security updates to build-time packages (GPU drivers, VLC) also reach the image. GPU VAAPI drivers are installed from Debian packages at image build time.
 
 ## Registries
 
@@ -41,6 +42,6 @@ A new image build is triggered automatically when upstream publishes a new relea
 
 ## Pipeline
 
-Automated CI/CD pipeline monitors upstream releases via external cron trigger (`repository_dispatch`). Builds are multi-arch with ZSTD compression, dual-registry push, and Trivy security scanning.
+Automated CI/CD pipeline monitors the upstream base image via external cron trigger (`repository_dispatch`). Builds are multi-arch with ZSTD compression, dual-registry push, and Trivy security scanning.
 
-Manual triggers available via `workflow_dispatch` with options for forced builds, version overrides, and registry selection.
+Manual triggers available via `workflow_dispatch` with options for forced builds and registry selection.
