@@ -99,8 +99,8 @@ permissions:
 
 env:
   TZ: ${{ vars.TZ || 'Asia/Dhaka' }}
-  DOCKERHUB_REPO: ${{ vars.DOCKERHUB_REPO || 'mekayelanik/ispyagentdvr-base-image' }}
-  GHCR_REPO: ${{ vars.GHCR_REPO || format('ghcr.io/{0}/ispyagentdvr-base-image', github.repository_owner) }}
+  DOCKERHUB_REPO: ${{ vars.DOCKERHUB_REPO || 'ispysoftware/agentdvr-base-image' }}
+  GHCR_REPO: ${{ vars.GHCR_REPO || format('ghcr.io/{0}/agentdvr-base-image', github.repository_owner) }}
   DEFAULT_PLATFORMS: ${{ vars.DEFAULT_PLATFORMS || 'linux/amd64,linux/arm64,linux/arm/v7' }}
   DEBIAN_BASE: ${{ vars.DEBIAN_BASE || 'trixie-slim' }}
   DEFAULT_BASE_IMAGE: ${{ vars.DEFAULT_BASE_IMAGE || format('debian:{0}', vars.DEBIAN_BASE || 'trixie-slim') }}
@@ -601,10 +601,8 @@ jobs:
             org.opencontainers.image.licenses=GPL-3.0
             org.opencontainers.image.title=ispyagentdvr-base-image
             org.opencontainers.image.url=https://github.com/${{ github.repository }}
-            org.opencontainers.image.authors=MD. MEKAYEL ANIK <mekayel.anik@gmail.com>
-            org.opencontainers.image.vendor=MD. MEKAYEL ANIK
-            dev.mekayelanik.country-of-origin=Bangladesh
-            dev.mekayelanik.message=== Free Palestine ==
+            org.opencontainers.image.authors=iSpy (https://www.ispyconnect.com)
+            org.opencontainers.image.vendor=iSpy
 
       - name: Export digest
         if: steps.check-tag.outputs.skip_build != 'true'
@@ -722,10 +720,8 @@ jobs:
           ANNO_ARGS+=(--annotation "index:org.opencontainers.image.licenses=GPL-3.0")
           ANNO_ARGS+=(--annotation "index:org.opencontainers.image.title=ispyagentdvr-base-image")
           ANNO_ARGS+=(--annotation "index:org.opencontainers.image.url=https://github.com/${{ github.repository }}")
-          ANNO_ARGS+=(--annotation "index:org.opencontainers.image.authors=MD. MEKAYEL ANIK <mekayel.anik@gmail.com>")
-          ANNO_ARGS+=(--annotation "index:org.opencontainers.image.vendor=MD. MEKAYEL ANIK")
-          ANNO_ARGS+=(--annotation "index:dev.mekayelanik.country-of-origin=Bangladesh")
-          ANNO_ARGS+=(--annotation "index:dev.mekayelanik.message=== Free Palestine ==")
+          ANNO_ARGS+=(--annotation "index:org.opencontainers.image.authors=iSpy (https://www.ispyconnect.com)")
+          ANNO_ARGS+=(--annotation "index:org.opencontainers.image.vendor=iSpy")
           for attempt in 1 2 3 4 5; do
             echo "Attempt $attempt: Creating GHCR manifest..."
             if docker buildx imagetools create "${ANNO_ARGS[@]}" $TAG_ARGS $DIGESTS 2>&1; then
@@ -760,10 +756,8 @@ jobs:
           ANNO_ARGS+=(--annotation "index:org.opencontainers.image.licenses=GPL-3.0")
           ANNO_ARGS+=(--annotation "index:org.opencontainers.image.title=ispyagentdvr-base-image")
           ANNO_ARGS+=(--annotation "index:org.opencontainers.image.url=https://github.com/${{ github.repository }}")
-          ANNO_ARGS+=(--annotation "index:org.opencontainers.image.authors=MD. MEKAYEL ANIK <mekayel.anik@gmail.com>")
-          ANNO_ARGS+=(--annotation "index:org.opencontainers.image.vendor=MD. MEKAYEL ANIK")
-          ANNO_ARGS+=(--annotation "index:dev.mekayelanik.country-of-origin=Bangladesh")
-          ANNO_ARGS+=(--annotation "index:dev.mekayelanik.message=== Free Palestine ==")
+          ANNO_ARGS+=(--annotation "index:org.opencontainers.image.authors=iSpy (https://www.ispyconnect.com)")
+          ANNO_ARGS+=(--annotation "index:org.opencontainers.image.vendor=iSpy")
           for attempt in 1 2 3 4 5; do
             echo "Attempt $attempt: Creating Docker Hub manifest..."
             if docker buildx imagetools create "${ANNO_ARGS[@]}" $TAG_ARGS "$SOURCE" 2>&1; then
