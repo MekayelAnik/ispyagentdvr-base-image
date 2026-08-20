@@ -5,6 +5,13 @@ FFMPEG_VERSION_URL="https://files.ispyconnect.com/libs/ffmpeg_version.txt"
 FFMPEG_BASE_URL="https://files.ispyconnect.com/libs"
 AGENTDVR_DIRECTORY="/AgentDVR"
 
+# The un-suffixed folder name ffmpeg<version>/ is AgentDVR's GPL variant slot;
+# the bundled LGPL build uses ffmpeg<version>-lgpl/. Agent searches only the
+# folder matching the "Software Encoders (FFmpeg GPL)" setting, in the order
+# persisted volume -> in-image copy -> system lib paths. This baked-in copy is
+# the in-image GPL fallback, so users get GPL encoders without a runtime
+# download. Do not rename or remove it, and keep FFMPEG_VERSION aligned with
+# the version AgentDVR looks for or the folder will not be found.
 ispy_ffmpeg() {
     echo "***** Installing iSpy prebuilt FFMPEG *****"
 
