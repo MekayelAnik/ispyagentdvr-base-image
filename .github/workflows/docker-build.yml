@@ -113,10 +113,13 @@ env:
   #
   #   {"event_type":"Docker Build & Publish - Cron Scheduled",
   #    "client_payload":{"package_refresh":false,"max_image_age_days":14}}
-  # repository_dispatch never populates github.event.inputs, so a documented payload
-  # like {"client_payload":{"force_build":"true"}} was silently ignored. Accept both,
-  # workflow_dispatch input first. Values may be JSON booleans or strings.
-  FORCE_BUILD: ${{ github.event.inputs.force_build || github.event.client_payload.force_build || 'false' }}
+  # NOTE: deliberately does NOT read github.event.client_payload.force_build.
+  # The scheduled cron payload has carried force_build:"true" for months while
+  # github.event.inputs was empty for repository_dispatch, so it never took effect.
+  # Honouring it turned every 30-minute poll into a full multi-arch rebuild.
+  # Use the package_refresh knobs below for scheduled rebuilds, or workflow_dispatch
+  # for a genuine one-off force.
+  FORCE_BUILD: ${{ github.event.inputs.force_build || 'false' }}
   CP_PACKAGE_REFRESH: ${{ github.event.client_payload.package_refresh }}
   CP_MAX_IMAGE_AGE_DAYS: ${{ github.event.client_payload.max_image_age_days }}
   VAR_PACKAGE_REFRESH: ${{ vars.PACKAGE_REFRESH_ENABLED }}
