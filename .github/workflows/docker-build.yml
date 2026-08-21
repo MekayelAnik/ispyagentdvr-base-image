@@ -9,7 +9,8 @@
 # downloaded by the app at runtime.
 #
 # Triggers:
-#   - repository_dispatch (cron-job.org external trigger)
+#   - schedule (daily auto-check)
+#   - repository_dispatch (external trigger)
 #   - workflow_dispatch (manual)
 #
 # Variant built: trixie-slim-vlc
@@ -27,6 +28,12 @@ name: Docker Build & Publish - Base Image
 on:
   repository_dispatch:
     types: [ispyagentdvr-base-image-build]
+
+  # Daily auto-check: rebuilds when the Debian base publishes a new digest or the
+  # published image ages past the package-refresh threshold, so security updates
+  # keep flowing without any external cron service.
+  schedule:
+    - cron: '43 2 * * *'
 
   workflow_dispatch:
     inputs:
